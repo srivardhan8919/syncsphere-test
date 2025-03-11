@@ -3,29 +3,51 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const roomManager = require('./roomManager');
+const { connectDB, getDB } = require('./db');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*', // Allow all origins for testing (update for production)
+    origin: '*',
     methods: ['GET', 'POST'],
   },
 });
 
-// Serve static files from the public folder
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
+// Connect to MongoDB
+connectDB();
+
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
-
   let currentRoomId = null;
 
-  socket.on('joinRoom', ({ roomId, username }) => {
-    console.log(`Join request: Room ID - ${roomId}, Username - ${username}`);
+  socket.on('createRoom', async ({ roomId, password }) => {
+    const db = getDB();
+    const existingRoom = await db.collection('rooms').findOne({ roomId });
+    if (existingRoom) {
+      socket.emit('error', 'Room ID already exists');
+      return;
+    }
+    await db.collection('rooms').insertOne({ roomId, password });
+    socket.emit('roomCreated', { roomId });
+  });
+
+  socket.on('joinRoom', async ({ roomId, username, password }) => {
+    const db = getDB();
+    const room = await db.collection('rooms').findOne({ roomId });
+    if (!room) {
+      socket.emit('error', 'Room does not exist');
+      return;
+    }
+    if (room.password !== password) {
+      socket.emit('error', 'Incorrect password');
+      return;
+    }
     const result = roomManager.joinRoom(socket, roomId, username);
     if (!result.success) {
       socket.emit('error', 'Invalid room ID or username');
@@ -33,7 +55,6 @@ io.on('connection', (socket) => {
     }
     currentRoomId = roomId;
     socket.join(roomId);
-    console.log(`Emitting 'joined' to ${socket.id}:`, { isHost: result.isHost, users: roomManager.getUsers(roomId) });
     socket.emit('joined', { isHost: result.isHost, users: roomManager.getUsers(roomId) });
     roomManager.broadcast(roomId, 'userUpdate', roomManager.getUsers(roomId), io, socket.id);
   });

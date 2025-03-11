@@ -17,10 +17,20 @@ function App() {
   const [error, setError] = useState('');
   const [videoUrl] = useState('https://www.w3schools.com/html/mov_bbb.mp4');
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
-  const [storedRoomId, setStoredRoomId] = useState(localStorage.getItem('roomId') || '');
 
   useEffect(() => {
+    socket.on('connect', () => {
+      console.log('Socket connected:', socket.id);
+    });
+
+    socket.on('roomCreated', ({ roomId }) => {
+      setIsCreatingRoom(false);
+      setError('');
+      setPassword('');
+    });
+
     socket.on('joined', ({ isHost, users }) => {
+      console.log('Received joined event:', { isHost, users });
       setIsJoined(true);
       setIsHost(isHost);
       setUsers(users);
@@ -36,12 +46,15 @@ function App() {
     });
 
     socket.on('error', (msg) => setError(msg));
+
     socket.on('roomClosed', () => {
       setIsJoined(false);
       setError('Host left, room closed.');
     });
 
     return () => {
+      socket.off('connect');
+      socket.off('roomCreated');
       socket.off('joined');
       socket.off('userUpdate');
       socket.off('newMessage');
@@ -55,38 +68,15 @@ function App() {
       setError('Please enter a room ID and password.');
       return;
     }
-    localStorage.setItem('roomId', roomId);
-    localStorage.setItem('password', password);
-    setStoredRoomId(roomId);
-    setIsCreatingRoom(false);
-    setError('');
-    setPassword('');
+    socket.emit('createRoom', { roomId, password });
   };
 
   const joinRoom = () => {
-    const storedRoomId = localStorage.getItem('roomId');
-    const storedPassword = localStorage.getItem('password');
-
     if (!roomId || !username || !password) {
       setError('Please enter a room ID, username, and password.');
       return;
-    }else{
-      setError('');
     }
-
-    if (!storedRoomId || storedRoomId !== roomId) {
-      setError('Room does not exist. Please create it first.');
-      setIsCreatingRoom(true);
-      return;
-    }
-
-    if (password !== storedPassword) {
-      setError('Incorrect password.');
-      return;
-    }
-
-    // Emit joinRoom with roomId explicitly
-    socket.emit('joinRoom', { roomId, username });
+    socket.emit('joinRoom', { roomId, username, password });
   };
 
   return (
@@ -94,13 +84,6 @@ function App() {
       {!isJoined ? (
         <div className="join-container">
           <h1>SyncSphere</h1>
-          {storedRoomId && (
-            <p>
-              Existing Room ID: <strong>{storedRoomId}</strong> 
-              <br />
-              (Password stored in localStorage, check browser dev tools)
-            </p>
-          )}
           {isCreatingRoom ? (
             <>
               <input
