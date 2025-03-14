@@ -26,15 +26,15 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
   let currentRoomId = null;
 
-  socket.on('createRoom', async ({ roomId, password }) => {
+  socket.on('createRoom', async ({ roomId, password, videoId }) => {
     const db = getDB();
     const existingRoom = await db.collection('rooms').findOne({ roomId });
     if (existingRoom) {
       socket.emit('error', 'Room ID already exists');
       return;
     }
-    await db.collection('rooms').insertOne({ roomId, password });
-    socket.emit('roomCreated', { roomId });
+    await db.collection('rooms').insertOne({ roomId, password, videoId });
+    socket.emit('roomCreated', { roomId, videoId });
   });
 
   socket.on('joinRoom', async ({ roomId, username, password }) => {
@@ -55,7 +55,11 @@ io.on('connection', (socket) => {
     }
     currentRoomId = roomId;
     socket.join(roomId);
-    socket.emit('joined', { isHost: result.isHost, users: roomManager.getUsers(roomId) });
+    socket.emit('joined', { 
+      isHost: result.isHost, 
+      users: roomManager.getUsers(roomId),
+      videoId: room.videoId
+    });
     roomManager.broadcast(roomId, 'userUpdate', roomManager.getUsers(roomId), io, socket.id);
   });
 
@@ -75,6 +79,29 @@ io.on('connection', (socket) => {
       roomManager.rooms.get(currentRoomId).users.get(socket.id) === u
     );
     io.to(currentRoomId).emit('newMessage', { username, message });
+  });
+
+  socket.on('leaveRoom', ({ roomId }) => {
+    if (!roomId) return;
+    const roomClosed = roomManager.leaveRoom(socket, roomId);
+    socket.leave(roomId);
+    if (roomClosed) {
+      io.to(roomId).emit('roomClosed');
+    } else {
+      roomManager.broadcast(roomId, 'userUpdate', roomManager.getUsers(roomId), io);
+    }
+  });
+
+  socket.on('changeVideo', async ({ roomId, videoId }) => {
+    if (!roomId || !videoId || !roomManager.isHost(socket, roomId)) return;
+    
+    const db = getDB();
+    await db.collection('rooms').updateOne(
+      { roomId },
+      { $set: { videoId } }
+    );
+    
+    io.to(roomId).emit('videoChanged', { videoId });
   });
 
   socket.on('disconnect', () => {
